@@ -63,7 +63,7 @@ headers, headers and body::
 
     def request_handler(environ):
         data = 'Hello World!'.encode('utf-8')
-        return data, '200 OK', [
+        return data, (200, 'OK'), [
             ('Content-Type', 'text/plain; charset=utf-8'),
             ('Content-Length', str(len(data)))
         ]
@@ -89,11 +89,13 @@ appiter
     ``close()`` with a try/finally block.
 
 status
-    The status is the status code for the response.  It can be unicode or
-    bytes.  If unicode is sent to the server it has to encode it with the
-    latin1 encoding and raise an `UnicodeError` if this fails.
+    The status is the status code for the response as tuple in the form
+    ``(code, messages)``.  Where the code is an integer and the message
+    can be unicode or bytes.  If unicode is sent to the server it has to
+    encode it with the latin1 encoding and raise an `UnicodeError` if this
+    fails.
 
-    The status is in the form ``XXX message``.  All status codes are
+    The status is in the form ``(code, message)``.  All status codes are
     allowed from the API perspective but some web servers might not be
     able to transparently pass all of them back to the browser.  This will
     especially be the case when a webapi application is running on top of
@@ -132,6 +134,15 @@ documented):
                                 header. *
 ``webapi.query_string``         The query string part of the URL as
                                 bytes.
+``webapi.is_secure``            `True` if the request came from an
+                                HTTPS request.
+``webapi.server_addr``          The name of the server that handles
+                                the application and the port
+                                ``(server_name, server_port)``.  The
+                                server name is a native string, the
+                                port an integer **
+``webapi.application_path``     The path to the application on the
+                                current host. **
 ``webapi.input``                A stream of incoming request data
 ``webapi.client_addr``          The address of the client as tuple in
                                 the form ``(address, port)``.  The
@@ -142,10 +153,15 @@ documented):
                                 latin1 and use the `replace` error
                                 handling for decode errors where native
                                 strings are unicode strings.
+``webapi.setup_environ``        The setup environment that was passed to
+                                the factory function.
 =============================== =========================================
 
 Values marked with a star (``*``) are part of the two-level dispatching
-which is explained below.
+which is explained below.  Values marked with two stars (``**``) are
+normally provided by the setup environment but might be unavailable at
+that time or change for a request.  These values are only present if they
+differ from the values in ``webapi.setup_environ``.
 
 The input stream is a file object opened in read only binary more which
 does not have to support seeking but all other operations.  The server has
@@ -172,8 +188,6 @@ following keys are required:
 
 =============================== =========================================
 ``webapi.version``              The version of the webapp specification
-``webapi.server_name``          The identifier of the server as unicode
-                                string including a version identifier.
 ``webapi.compliance_level``     The server compliance level.  See the
                                 note below on server compliances for more
                                 information.
@@ -188,12 +202,15 @@ following keys are required:
                                 way.
 ``webapi.process_reuse``        `True` if this server reuses the
                                 processes for request handling.
-``webapi.server_name``          The name of the server that handles
-                                the application. *
+``webapi.server_addr``          The name of the server that handles
+                                the application and the port
+                                ``(server_name, server_port)``.  The
+                                server name is a native string, the
+                                port an integer *
 ``webapi.application_path``     The path to the application on the
                                 current host. *
-``webapi.setup_environ``        The setup environment that was passed to
-                                the factory function.
+``webapi.prefer_ssl``           `True` if SSL is preferred for the
+                                server.  Can be used for URL building.
 =============================== =========================================
 
 All keys are required except for keys marked with a star.  If a server is
@@ -219,9 +236,9 @@ handler::
 
     def app_factory(setup_environ):
         def request_handler(environ):
-            rv = 'Server name: %s' % setup_environ['webapi.server_name']
+            rv = 'Server name: %s' % setup_environ['webapi.server_addr'][0]
             data = rv.encode('utf-8')
-            return data, '200 OK', [
+            return data, (200, 'OK'), [
                 ('Content-Type', 'text/plain; charset=utf-8'),
                 ('Content-Length', str(len(data)))
             ]
@@ -236,9 +253,9 @@ register classes.  This example works as well and does the same::
             self.setup_environ = setup_environ
 
         def __call__(self, environ):
-            rv = 'Server name: %s' % self.setup_environ['webapi.server_name']
+            rv = 'Server name: %s' % self.setup_environ['webapi.server_addr'][0]
             data = rv.encode('utf-8')
-            return data, '200 OK', [
+            return data, (200, 'OK'), [
                 ('Content-Type', 'text/plain; charset=utf-8'),
                 ('Content-Length', str(len(data)))
             ]
@@ -262,7 +279,7 @@ specification:
    incoming headers.  They should try to reconstruct the values as good as
    possible though.
 2. Like compliance level 1, but with the additional restriction that the
-   ``webapi.server_name`` or ``webapi.process_reuse`` will be unavailable
+   ``webapi.server_addr`` or ``webapi.process_reuse`` will be unavailable
    in all situations.  If the server is capable of giving away this
    information ahead of time but due to the configuration cannot provide
    it, it might still be compliant to 1 or 0.
@@ -300,7 +317,7 @@ request dispatching.
 
 The actual root of the application is defined in the setup environment as
 ``webapi.application_path`` and the name of the server as
-``webapi.server_name``.  If these informations are not available at setup
+``webapi.server_addr``.  If these informations are not available at setup
 time they are `None` and transmitted in the request environment.  An
 interesting aspect is the server name.  This always referrs to the base
 host name of the application.  For example if an application is listening
@@ -318,7 +335,7 @@ prefix.  To clear up the confusion, let's start with the most basic case:
 
 -   the application is mounted at ``/`` on the server ``example.com``
 -   in the setup environment the ``webapi.application_path`` is ``/``
-    and the ``webapi.server_name`` is ``example.com``
+    and the ``webapi.server_addr`` is ``('example.com', 80)``
 -   a request comes in to ``http://www.example.com/index.html``.
 -   in this case the request values are:
 
@@ -334,7 +351,7 @@ as a "sub request handler" invoked by another request handler.
 -   the application is mounted at ``/`` on the server ``example.com``
 -   everything below ``wiki`` is sent to another request handler
 -   in the setup environment the ``webapi.application_path`` is ``/``
-    and the ``webapi.server_name`` is ``example.com``
+    and the ``webapi.server_addr`` is ``('example.com', 80)``
 -   a request comes in to ``http://www.example.com/wiki/Main_Page``.
 -   in this case the request values are:
 
@@ -342,7 +359,7 @@ as a "sub request handler" invoked by another request handler.
     * ``webapi.path`` is ``index.html``
 
 In the case that a server is unable to provide the
-``webapi.application_path``  and ``webapi.server_name`` in advance to the
+``webapi.application_path``  and ``webapi.server_addr`` in advance to the
 application, it must provide these values in the request environment.  If
 it does not know the server name at all it must still pass the key, but
 set the value to `None`.  It should not try to reconstruct the server name
@@ -386,6 +403,15 @@ Pseudocode::
         f.close()
 
 .. XXX: connection close?  up to app?
+
+URL Reconstruction
+------------------
+
+The URL reconstruction should always take the values from the request
+environment into consideration.  And then combine them with the values
+from the setup environment.  The server addr for instance can come from
+the setup environment but might be `None` there in which case the
+algorithm has to look at the values from the current request environment.
 
 
 Deferred Responses
