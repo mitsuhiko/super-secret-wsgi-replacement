@@ -122,9 +122,7 @@ documented):
                                 of tuples in the form ``(key, value)``.
                                 Both key and value are native strings,
                                 The server has to decode the value as
-                                latin1 and use the `replace` error
-                                handling for decode errors where native
-                                strings are unicode strings.
+                                latin1.
 ``webapi.prefix``               The prefix to requests as bytes.  This
                                 path is kept URL encoded unlike the CGI
                                 `PATH_INFO` header. *
@@ -150,9 +148,7 @@ documented):
                                 an integer.
 ``webapi.method``               the HTTP request method as native string.
                                 The server has to decode the value as
-                                latin1 and use the `replace` error
-                                handling for decode errors where native
-                                strings are unicode strings.
+                                latin1.
 ``webapi.setup_environ``        The setup environment that was passed to
                                 the factory function.
 =============================== =========================================
@@ -168,7 +164,11 @@ does not have to support seeking but all other operations.  The server has
 to ensure that a call to ``environ['webapp.input'].read()`` is safe, thus
 limiting the incoming data to the content length.
 
-.. TODO: Is there a PSH?  Are there cases of bodies without content length?
+.. TODO: chunked data and content length?
+
+.. TODO: proper input API (tell?)
+
+.. TODO: request input errors in WSGI undefined.  closed client?!
 
 Readers familiar with the WSGI specification will notice that some keys
 present in WSGI are missing.  Especially there seem to be no keys for
@@ -222,6 +222,9 @@ applications.
 
 If the server does not know a setting (eg: if threads are reused or not)
 it should set the value to `None`.
+
+.. XXX: signalling restarts.  let the server call a callback before
+   request, send data the other way round basically.
 
 Low Level Registration
 ----------------------
@@ -390,7 +393,12 @@ Pseudocode::
                                'application iterators')
 
         appiter, status, headers = rv
-        f.write(b'HTTP/1.1 ' + make_bytes(status) + '\r\n')
+        if isinstance(status, int):
+            statusline = '%s %s' % (status, lookup_status(status))
+        else:
+            # XXX: bytes
+            statusline = '%s %s' % status
+        f.write(b'HTTP/1.1 ' + make_bytes(statusline) + '\r\n')
         for key, value in headers:
             f.write(make_bytes(key) + b': ' + make_bytes(value) + '\r\n')
         f.write(b'\r\n')
@@ -403,6 +411,14 @@ Pseudocode::
         f.close()
 
 .. XXX: connection close?  up to app?
+
+.. XXX: decline request!
+
+.. XXX: cleanup functions
+
+.. XXX: change SCRIPT_NAME/PATH_INFO back
+
+.. XXX: content length and transfer encodings (apache zip)
 
 URL Reconstruction
 ------------------
